@@ -14,6 +14,8 @@
 --
 -- IMPORTANT: This is MySQL syntax, NOT Snowflake SQL.
 -- CREATE TABLE IF NOT EXISTS will not alter previously created table designs.
+-- If jobavenir_db already exists without the Jobicy URL/salary/level columns,
+-- run JobAvenir_01b_Add_Jobicy_Fields_MySQL.sql once to add them.
 -- Do not use DROP DATABASE, DROP TABLE, or foreign_key_checks=0 on your work.
 -- ============================================================================
 
@@ -63,14 +65,26 @@ CREATE TABLE IF NOT EXISTS stg_job_titles (
 
 -- CSV: jobicy_jobs_clean.csv
 -- Expected headers: job_id, job_title, company_name, location,
---                   description_clean, publication_date
+--                   description_clean, publication_date, job_url, job_level,
+--                   job_industry, salary_min, salary_max, salary_currency,
+--                   salary_period, searched_role, collected_at, last_seen_at
 CREATE TABLE IF NOT EXISTS stg_jobicy_postings (
   job_id            VARCHAR(100),
   job_title         VARCHAR(500),
   company_name      VARCHAR(500),
   location          VARCHAR(500),
   description_clean LONGTEXT,
-  publication_date  VARCHAR(100)
+  publication_date  VARCHAR(100),
+  job_url           VARCHAR(1000),
+  job_level         VARCHAR(100),
+  job_industry      VARCHAR(500),
+  salary_min        VARCHAR(50),
+  salary_max        VARCHAR(50),
+  salary_currency   VARCHAR(10),
+  salary_period     VARCHAR(20),
+  searched_role     VARCHAR(100),
+  collected_at      VARCHAR(100),
+  last_seen_at      VARCHAR(100)
 ) ENGINE=InnoDB;
 
 -- CSV: job_skills_clean.csv (extracted from Jobicy job descriptions)
@@ -147,6 +161,10 @@ CREATE TABLE IF NOT EXISTS companies (
 
 -- 6. Actual Jobicy jobs. occupation_id starts NULL until title matching.
 -- job_geo describes remote geographic eligibility, NOT a verified US state.
+-- job_url links to the original Jobicy page (Jobicy asks for credit + link).
+-- Salary columns are NULL when the employer listed no pay range.
+-- searched_role = first Jobicy search tag that returned the posting.
+-- collected_at / last_seen_at = first and latest pull that saw the posting.
 CREATE TABLE IF NOT EXISTS job_postings (
   job_id          VARCHAR(100) NOT NULL,
   job_title       VARCHAR(500) NOT NULL,
@@ -156,6 +174,14 @@ CREATE TABLE IF NOT EXISTS job_postings (
   job_geo         VARCHAR(500) NULL,
   job_description LONGTEXT NULL,
   published_at    DATETIME NULL,
+  job_url         VARCHAR(1000) NULL,
+  job_level       VARCHAR(100) NULL,
+  job_industry    VARCHAR(500) NULL,
+  salary_min      DECIMAL(12,2) NULL,
+  salary_max      DECIMAL(12,2) NULL,
+  salary_currency VARCHAR(10) NULL,
+  salary_period   VARCHAR(20) NULL,
+  searched_role   VARCHAR(100) NULL,
   collected_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   last_seen_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                                   ON UPDATE CURRENT_TIMESTAMP,
