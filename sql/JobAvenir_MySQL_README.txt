@@ -6,6 +6,12 @@ FILES
 1. JobAvenir_01_Create_Database_MySQL.sql
    Creates MySQL database, 5 import/staging tables, and 7 normalized tables.
 
+1b. JobAvenir_01b_Add_Jobicy_Fields_MySQL.sql
+  Run ONCE on a database created before the Jobicy URL, salary, level,
+  industry, and search-tag columns existed. Adds them to stg_jobicy_postings
+  and job_postings.
+   Skip it on a new database (File 1 already creates them).
+
 2. JobAvenir_02_Load_and_Analyze_MySQL.sql
    Loads cleaned CSVs from staging into core, validates relationships, creates
    market_skill_demand VIEW, includes 5 analytical queries and safe CRUD demo.
@@ -20,6 +26,7 @@ REQUIREMENTS
 VERY IMPORTANT ORDER
 --------------------
 A. Open File 1 in MySQL Workbench and execute it once.
+   Database already created with the earlier File 1? Also run File 1b once.
 B. Refresh the SCHEMAS panel. Look for jobavenir_db > Tables.
 C. Import the following cleaned CSV files into the EXISTING staging tables:
 
@@ -35,6 +42,12 @@ C. Import the following cleaned CSV files into the EXISTING staging tables:
    Check UTF-8 encoding, comma separator, header row and quoted multiline
    job descriptions. The original Python Pandas to_csv() uses quoted fields
    as needed. MySQL Workbench import may be slow for large CSVs; monitor errors.
+
+   The two Jobicy CSVs (jobicy_jobs_clean.csv and job_skills_clean.csv) are
+   imported with notebooks/importing_jobicy_data_into_MySql.ipynb instead of
+   the wizard, because the long descriptions break the wizard. After
+   re-running the Jobicy notebook, keep REPLACE_STAGING = 1 so old staging
+   rows are replaced rather than duplicated.
 
    If you haven't produced job_skills_clean.csv yet, finish your Python skill
    extraction; otherwise the job_skills table and market_skill_demand view
@@ -63,7 +76,9 @@ job_titles_clean.csv:
 
 jobicy_jobs_clean.csv:
  job_id, job_title, company_name, location, description_clean,
- publication_date
+ publication_date, job_url, job_level, job_industry, salary_min,
+ salary_max, salary_currency, salary_period, searched_role,
+ collected_at, last_seen_at
 
 job_skills_clean.csv:
  job_id, skill_name
@@ -79,6 +94,10 @@ IMPORTANT DATA NOTES
 - O*NET source codes, e.g. '08', must remain strings. If the original CSV was
   read into Pandas without dtype={'Source(s)':'string'}, recreate that CSV
   after reloading with the dtype to preserve leading zeros.
+- Every Jobicy pull is saved unchanged in data/jobicy/raw/<UTC time>/.
+  The cleaning notebook reads only those saved files, never the live API.
+- job_url must be shown with each posting: Jobicy asks API users to credit
+  Jobicy and link to the original posting.
 - Jobicy geo=usa describes remote jobs available to US applicants. It does
   not prove the employer's office is located in a given US state.
 - The title classification of Data Analyst / Data Scientist / Data Engineer /

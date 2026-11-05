@@ -6,6 +6,8 @@
 -- ============================================================================
 -- BEFORE RUNNING:
 --   [ ] Ran JobAvenir_01_Create_Database_MySQL.sql successfully.
+--   [ ] On a database created before the URL/salary/level columns existed,
+--       ran JobAvenir_01b_Add_Jobicy_Fields_MySQL.sql once.
 --   [ ] Imported all FIVE cleaned CSV files into matching stg_* tables:
 --       occupations_clean.csv      -> stg_occupations
 --       software_skills_clean.csv  -> stg_software_skills
@@ -23,6 +25,9 @@
 -- ============================================================================
 
 USE jobavenir_db;
+
+-- The Python export writes UTC times; store and show TIMESTAMP columns in UTC.
+SET time_zone = '+00:00';
 
 -- --------------------------------------------------------------------------
 -- STEP 0. Confirm you actually imported data before proceeding.
@@ -148,10 +153,16 @@ SELECT COUNT(*) AS companies_loaded FROM companies;
 -- classification (not guaranteed; manually inspect mismatches).
 -- publication_date is imported as text; parse common ISO timestamp formats.
 -- Dates are treated as UTC if your Python export wrote UTC timestamps.
+-- Salary text becomes a number only when it is a plain number (e.g. 145000.0).
+-- collected_at keeps the EARLIEST pull that saw a posting; last_seen_at the
+-- LATEST, so re-loading after new pulls never loses the first-seen date.
 -- --------------------------------------------------------------------------
 INSERT INTO job_postings
   (job_id, job_title, company_id, occupation_id, role_category,
-   job_geo, job_description, published_at)
+   job_geo, job_description, published_at,
+   job_url, job_level, job_industry,
+   salary_min, salary_max, salary_currency, salary_period,
+   searched_role, collected_at, last_seen_at)
 SELECT TRIM(j.job_id),
        TRIM(j.job_title),
        c.company_id,
@@ -179,7 +190,41 @@ SELECT TRIM(j.job_id),
                 '%Y-%m-%d %H:%i:%s'
               )
          ELSE NULL
-       END
+       END,
+       NULLIF(TRIM(j.job_url), ''),
+       NULLIF(TRIM(j.job_level), ''),
+       NULLIF(TRIM(j.job_industry), ''),
+       CASE
+         WHEN TRIM(COALESCE(j.salary_min, '')) REGEXP '^[0-9]+([.][0-9]+)?$'
+         THEN CAST(TRIM(j.salary_min) AS DECIMAL(12,2))
+         ELSE NULL
+       END,
+       CASE
+         WHEN TRIM(COALESCE(j.salary_max, '')) REGEXP '^[0-9]+([.][0-9]+)?$'
+         THEN CAST(TRIM(j.salary_max) AS DECIMAL(12,2))
+         ELSE NULL
+       END,
+       NULLIF(UPPER(TRIM(j.salary_currency)), ''),
+       NULLIF(LOWER(TRIM(j.salary_period)), ''),
+       NULLIF(TRIM(j.searched_role), ''),
+       COALESCE(CASE
+         WHEN TRIM(COALESCE(j.collected_at, ''))
+              REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'
+         THEN STR_TO_DATE(
+                REPLACE(LEFT(TRIM(j.collected_at), 19), 'T', ' '),
+                '%Y-%m-%d %H:%i:%s'
+              )
+         ELSE NULL
+       END, CURRENT_TIMESTAMP),
+       COALESCE(CASE
+         WHEN TRIM(COALESCE(j.last_seen_at, ''))
+              REGEXP '^[0-9]{4}-[0-9]{2}-[0-9]{2}[ T][0-9]{2}:[0-9]{2}:[0-9]{2}'
+         THEN STR_TO_DATE(
+                REPLACE(LEFT(TRIM(j.last_seen_at), 19), 'T', ' '),
+                '%Y-%m-%d %H:%i:%s'
+              )
+         ELSE NULL
+       END, CURRENT_TIMESTAMP)
 FROM stg_jobicy_postings j
 LEFT JOIN companies c ON c.company_name = TRIM(j.company_name)
 WHERE NULLIF(TRIM(j.job_id), '') IS NOT NULL
@@ -191,7 +236,17 @@ ON DUPLICATE KEY UPDATE
   job_geo = VALUES(job_geo),
   job_description = VALUES(job_description),
   published_at = VALUES(published_at),
-  last_seen_at = CURRENT_TIMESTAMP;
+  job_url = VALUES(job_url),
+  job_level = VALUES(job_level),
+  job_industry = VALUES(job_industry),
+  salary_min = VALUES(salary_min),
+  salary_max = VALUES(salary_max),
+  salary_currency = VALUES(salary_currency),
+  salary_period = VALUES(salary_period),
+  searched_role = VALUES(searched_role),
+  -- table name needed: the staging table also has these two column names
+  collected_at = LEAST(job_postings.collected_at, VALUES(collected_at)),
+  last_seen_at = GREATEST(job_postings.last_seen_at, VALUES(last_seen_at));
 
 SELECT COUNT(*) AS unique_job_postings_loaded FROM job_postings;
 
@@ -268,6 +323,13 @@ WHERE jp.job_id IS NULL OR s.skill_id IS NULL;
 -- Missing expected source fields. Review; don't silently delete.
 SELECT COUNT(*) AS jobs_missing_company
 FROM job_postings WHERE company_id IS NULL;
+
+-- Fields the dashboard needs: link to the original posting, salary and level.
+SELECT COUNT(*) AS total_postings,
+       SUM(job_url IS NOT NULL) AS with_job_url,
+       SUM(salary_min IS NOT NULL) AS with_salary_range,
+       SUM(job_level IS NOT NULL) AS with_job_level
+FROM job_postings;
 
 -- Titles not yet mapped to a standardized O*NET occupation.
 SELECT job_id, job_title, role_category
