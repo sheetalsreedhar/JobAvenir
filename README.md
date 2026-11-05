@@ -18,8 +18,8 @@ The team switched from Greenhouse to Jobicy for simpler public role-based search
 | O*NET | `occupations_clean.csv` | 1,016 | Standardized occupations and descriptions |
 | O*NET | `software_skills_clean.csv` | 31,821 | Occupation–software associations |
 | O*NET | `job_titles_clean.csv` | 54,269 | Alternative occupation titles |
-| Jobicy API | `jobicy_jobs_clean.csv` | 79 | Saved sample of job postings and descriptions |
-| Derived from Jobicy | `job_skills_clean.csv` | 176 | Extracted job–skill pairs |
+| Jobicy API | `jobicy_jobs_clean.csv` | 74 | Saved sample of job postings and descriptions |
+| Derived from Jobicy | `job_skills_clean.csv` | 167 | Extracted job–skill pairs |
 | O*NET | `essential_skills_clean.csv` | 18,200 | Occupation-specific essential-skill ratings |
 | O*NET | `transferable_skills_clean.csv` | 45,500 | Occupation-specific transferable-skill ratings |
 
@@ -61,68 +61,48 @@ Cleaned both CSVs in Python/Pandas using the same 15-column mapping:
 
 Processing included trimming text, retaining missing optional statistical fields, converting numeric rating fields, standardizing Y/N flags, examining duplicate rating keys, and checking occupation IDs against O*NET occupations. The identity of a rating is **(`occupation_id`, `element_id`, `scale_id`)**; different rating scales for the same occupation/skill are valid separate records. Preserve `scale_id` rather than averaging scales together.
 
-### 2. Created four MySQL tables
+### 2. Staged in MySQL
 
-Opened and executed `sql/JobAvenir_03_Add_Essential_Transferable_Skills_MySQL.sql` in MySQL Workbench. This adds:
+The two cleaned CSVs were first loaded with separate scripts (03 and 04), and the staging imports were verified in MySQL Workbench on November 5: `stg_essential_skills` = **18,200** rows and `stg_transferable_skills` = **45,500** rows. Later the same day the skills tables were consolidated (next section), and scripts 03 and 04 were merged into Files 1 and 2.
 
-| Table | Role |
+## November 5, 2026 — One skills table
+
+All skills now live in **one `skills` table** with a `skill_category` field, instead of a separate table for each type of skill. Scripts 01b, 03 and 04 were merged into File 1 (create) and File 2 (load), so the database is built with two scripts.
+
+| Core table | What it holds |
 |---|---|
-| `stg_essential_skills` | Staging import of 15-column Essential Skills CSV |
-| `stg_transferable_skills` | Staging import of 15-column Transferable Skills CSV |
-| `essential_skill_ratings` | Final normalized table of Essential Skills ratings |
-| `transferable_skill_ratings` | Final normalized table of Transferable Skills ratings |
+| `occupations` | O*NET occupations |
+| `skills` | Every skill once. `skill_category` = Technology, Essential or Transferable; `skill_source` = O*NET or Jobicy; `onet_element_id` for Essential and Transferable skills |
+| `job_titles` | O*NET alternative titles |
+| `occupation_technology_skills` | Technology skills per occupation, with the technology type and the Hot Technology / In Demand flags |
+| `occupation_skill_ratings` | Essential and Transferable ratings per occupation (Importance and Level), replacing the two separate rating tables |
+| `companies` | Companies from Jobicy postings |
+| `job_postings` | Jobicy postings |
+| `job_skills` | Jobicy posting ↔ skill links |
 
-The two final rating tables omit `occupation_title` (already stored in `occupations`) and have **primary key** (`occupation_id`, `element_id`, `scale_id`) plus a **foreign key** to `occupations(occupation_id)`. Existing original database tables were not recreated. The database now has **16 defined tables: 7 staging + 9 relational**.
+The database has **15 tables (7 staging + 8 core)** and two views: `market_skill_demand`, and `occupation_skills`, which lists every occupation–skill pair of any category in one place (importance and level for Essential/Transferable skills; Hot Technology / In Demand flags for Technology skills) without storing anything twice.
 
-### 3. Imported the cleaned CSVs into staging
+Design notes:
 
-| CSV | Import destination | **Verified rows** |
-|---|---|---:|
-| `essential_skills_clean.csv` | `stg_essential_skills` | **18,200** |
-| `transferable_skills_clean.csv` | `stg_transferable_skills` | **45,500** |
+- A skill is stored once whatever its type, so O*NET occupations and Jobicy postings point to the same `skill_id`.
+- The two occupation link tables hold different facts: a Technology skill is *used* (with Hot Technology / In Demand flags), while an Essential or Transferable skill is *rated* (Importance and Level, with statistics).
+- The skill name and scale name are no longer repeated in every rating row. The skill comes from `skills`, and `scale_id` is IM (Importance) or LV (Level).
+- `date_updated` was written two ways in the source files ('08/2026' and 'Aug-26'); it is stored as 'YYYY-MM'.
+- Jobicy keywords that match an O*NET name exactly (Python, Tableau, PostgreSQL, Snowflake, Docker) reuse that skill. AWS, Java, Power BI and SQL are added with `skill_source = 'Jobicy'`, ready for a later skill-alias step.
 
-The following SQL was executed to check table counts:
-
-```sql
-USE jobavenir_db;
-
-SELECT 'stg_essential_skills' AS table_name, COUNT(*) AS rows_loaded
-FROM stg_essential_skills
-UNION ALL
-SELECT 'stg_transferable_skills', COUNT(*)
-FROM stg_transferable_skills
-UNION ALL
-SELECT 'essential_skill_ratings', COUNT(*)
-FROM essential_skill_ratings
-UNION ALL
-SELECT 'transferable_skill_ratings', COUNT(*)
-FROM transferable_skill_ratings;
-```
-
-**Last confirmed result (November 5):** `stg_essential_skills` = **18,200**; `stg_transferable_skills` = **45,500**; `essential_skill_ratings` = **0**; `transferable_skill_ratings` = **0**. Thus, the CSVs have been staged **but not yet confirmed loaded into final rating tables**.
-
-### 4. Prepared final loading and validation queries (next to execute)
-
-`sql/JobAvenir_04_Load_Essential_Transferable_Skills_MySQL.sql` provides:
-
-- **Section A:** Validate populated parent `occupations` table, unmatched occupation codes, duplicate composite keys, missing required values, malformed rating values, and invalid Y/N flags.
-- **Section B:** Insert valid staged records into `essential_skill_ratings` and `transferable_skill_ratings` in a transaction.
-- **Section C:** Compare final counts with staging and test occupation-to-skill SQL joins.
-
-**Do not claim final loading is complete until these statements have run successfully and the final row counts have been verified.** The `occupations` parent table must be populated before either rating table can accept foreign-key references.
+**Test build (November 5, MySQL 8.0.46, fresh database):** `skills` = 8,792 (Technology 8,757, Essential 10, Transferable 25); `occupation_technology_skills` = 31,821; `occupation_skill_ratings` = 63,700 (18,200 + 45,500); every validation check = 0. These counts still need to be confirmed on the team's own machines.
 
 ## MySQL setup and reproduction
 
-**Requirements:** MySQL Community Server 8.0+, MySQL Workbench, Python 3, Pandas, Requests, Beautiful Soup, and `mysql-connector-python` for Python-based CSV importing.
+**Requirements:** MySQL 8.0+ (MySQL Community Server, or MAMP 7+ with MySQL 8.0 selected), MySQL Workbench, Python 3 with Pandas, Requests, Beautiful Soup and `mysql-connector-python`, and Jupyter or VS Code for the notebooks.
 
-1. Clone this repository and connect to a local MySQL Community Server in Workbench.
-2. Run `sql/JobAvenir_01_Create_Database_MySQL.sql` to create `jobavenir_db` and the original tables.
-3. Load the original five cleaned CSV files into the matching `stg_*` tables. If the Workbench wizard fails on long Jobicy descriptions, use the Python MySQL connector to load the CSV safely. Check for partially loaded tables before retrying.
-4. Run the **validation then core-loading** steps from `sql/JobAvenir_02_Load_and_Analyze_MySQL.sql` in order; verify key relationships and counts.
-5. Run `sql/JobAvenir_03_Add_Essential_Transferable_Skills_MySQL.sql` to create the new rating tables.
-6. Import `essential_skills_clean.csv` into `stg_essential_skills` and `transferable_skills_clean.csv` into `stg_transferable_skills`.
-7. Run **Section A** of `sql/JobAvenir_04_Load_Essential_Transferable_Skills_MySQL.sql`. Only after the checks pass, run **Section B**, verify both inserts, and commit. Run **Section C** to verify final tables.
-8. Execute the prepared CRUD and job-market analytical queries; capture their real outputs for the ADT milestone submission.
+1. Clone this repository and connect MySQL Workbench to your MySQL server (MAMP uses port 8889 by default, standard MySQL 3306).
+2. If you built `jobavenir_db` with the older scripts, run `DROP DATABASE jobavenir_db;` once. This only removes your local copy.
+3. Run `sql/JobAvenir_01_Create_Database_MySQL.sql` to create the 15 tables.
+4. Import the five O*NET CSVs (occupations, software skills, job titles, essential skills, transferable skills) into their `stg_*` tables with the Table Data Import Wizard.
+5. Import the two Jobicy CSVs with `notebooks/importing_jobicy_data_into_MySql.ipynb` (`REPLACE_STAGING = 1`). Clear the notebook's outputs before committing it.
+6. Run `sql/JobAvenir_02_Load_and_Analyze_MySQL.sql`. Every validation count should be 0, and the row counts should match `sql/JobAvenir_MySQL_README.txt`.
+7. Capture the outputs and screenshots of the CRUD demo and analytical queries for the ADT milestone submission.
 
 **Safety:** Never commit database passwords, `.env` files, or other secrets. GitHub shares source files, **not the running local MySQL database**; teammates need to create their own copy using these scripts and datasets. Pull the latest changes before editing and commit meaningful updates as you go.
 
@@ -133,10 +113,10 @@ FROM transferable_skill_ratings;
 | Initial 5 source/derived datasets cleaned and prepared | Completed |
 | Original MySQL database schema created | Completed |
 | Essential Skills and Transferable Skills cleaned | Completed |
-| Four new MySQL staging/final rating tables created | Completed |
 | Essential and Transferable CSVs imported into staging | **Verified (18,200 + 45,500)** |
-| Load data into `essential_skill_ratings` and `transferable_skill_ratings` | **Pending verification (last observed 0 + 0)** |
-| Verify all main relational tables / CRUD / analytics | Verify or complete as needed |
+| Skills consolidated into one `skills` table (Files 1 and 2) | Completed; tested on a fresh MySQL 8.0 build |
+| Rebuild `jobavenir_db` on team machines and record counts | Pending |
+| Skill aliases linking Jobicy keywords to O*NET skills | Planned, after reviewing the loaded data |
 | Finalize ER diagram and Milestone 2 report | In progress |
 | Implement Streamlit frontend and deployment | Planned |
 
