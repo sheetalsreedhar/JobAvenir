@@ -92,9 +92,11 @@ SELECT COUNT(*) AS occupations_loaded FROM occupations;
 --   2a. Technology   : distinct O*NET software/technology names
 --   2b. Essential    : O*NET Basic Skills, one row per element_id (2.A.*)
 --   2c. Transferable : O*NET Cross-Functional Skills, one per element_id (2.B.*)
---   2d. Technology   : Jobicy keywords not already in O*NET under that exact
---                      name get skill_source = 'Jobicy'. Exact matches such
---                      as 'Python' reuse the existing O*NET row.
+--   2d. Aliases      : Jobicy keywords whose O*NET name is different
+--                      (e.g. 'SQL' -> 'Structured query language SQL')
+--   2e. Technology   : Jobicy keywords that match no O*NET skill by exact
+--                      name or alias get skill_source = 'Jobicy'. Exact
+--                      matches such as 'Python' reuse the existing O*NET row.
 -- --------------------------------------------------------------------------
 -- Check first: an O*NET element listed in BOTH skill files (expected 0).
 SELECT COUNT(*) AS elements_in_both_files
@@ -130,11 +132,56 @@ GROUP BY TRIM(t.element_id)
 ON DUPLICATE KEY UPDATE
   skill_name = VALUES(skill_name);
 
--- 2d. Jobicy keywords (an existing row with the same name is left unchanged)
+-- 2d. Skill aliases: Jobicy keyword -> the O*NET Technology skill it means.
+-- Add a row here when the Python skill dictionary gains a keyword whose
+-- O*NET name is different. Keywords spelled exactly as in O*NET (Python,
+-- Tableau, PostgreSQL, Snowflake, Docker, Microsoft Excel) need no alias.
+INSERT INTO skill_aliases (alias_name, skill_id, alias_source)
+SELECT a.alias_name, k.skill_id, 'Jobicy keyword'
+FROM (
+  SELECT 'SQL' AS alias_name, 'Structured query language SQL' AS onet_name
+  UNION ALL SELECT 'AWS', 'Amazon Web Services AWS software'
+  UNION ALL SELECT 'Power BI', 'Microsoft Power BI'
+  UNION ALL SELECT 'Java', 'Oracle Java'
+) a
+JOIN skills k ON k.skill_name = a.onet_name
+             AND k.skill_category = 'Technology'
+ON DUPLICATE KEY UPDATE
+  skill_id = VALUES(skill_id),
+  alias_source = VALUES(alias_source);
+
+SELECT a.alias_name, k.skill_name AS onet_skill_name
+FROM skill_aliases a
+JOIN skills k ON k.skill_id = a.skill_id
+ORDER BY a.alias_name;
+
+-- A keyword loaded earlier as a Jobicy-only skill (e.g. 'SQL' before the
+-- aliases existed) is removed here, with its posting links; Step 9 links
+-- those postings to the O*NET skill instead, so nothing is counted twice.
+SET @jobavenir_prior_safe_updates = @@SQL_SAFE_UPDATES;
+SET SQL_SAFE_UPDATES = 0;  -- only for these two controlled clean-up deletes
+
+DELETE js
+FROM job_skills js
+JOIN skills old_skill ON old_skill.skill_id = js.skill_id
+JOIN skill_aliases a ON a.alias_name = old_skill.skill_name
+WHERE old_skill.skill_source = 'Jobicy';
+
+DELETE old_skill
+FROM skills old_skill
+JOIN skill_aliases a ON a.alias_name = old_skill.skill_name
+WHERE old_skill.skill_source = 'Jobicy';
+
+SET SQL_SAFE_UPDATES = @jobavenir_prior_safe_updates;
+
+-- 2e. Jobicy keywords with no exact O*NET name and no alias become new
+-- Technology skills (an existing row with the same name is left unchanged)
 INSERT INTO skills (skill_name, skill_category, skill_source)
 SELECT DISTINCT TRIM(j.skill_name), 'Technology', 'Jobicy'
 FROM stg_job_skills j
+LEFT JOIN skill_aliases a ON a.alias_name = TRIM(j.skill_name)
 WHERE NULLIF(TRIM(j.skill_name), '') IS NOT NULL
+  AND a.alias_name IS NULL
 ON DUPLICATE KEY UPDATE
   skill_source = skills.skill_source;
 
@@ -346,7 +393,16 @@ SELECT TRIM(j.job_id),
          WHEN LOWER(j.job_title) LIKE '%software engineer%'
            OR LOWER(j.job_title) LIKE '%software developer%'
            THEN 'Software Engineer'
-         ELSE 'Other Tech'
+         -- Titles the rules above miss: tech if the title names a technical
+         -- job or Jobicy files the posting under a tech industry, otherwise
+         -- Non-Tech (collection has no role filter, so sales, HR,
+         -- marketing... postings arrive too)
+         WHEN LOWER(j.job_title) REGEXP
+              'engineer|developer|programmer|devops|architect'
+           OR LOWER(COALESCE(j.job_industry, '')) REGEXP
+              'software engineering|data science|cybersecurity|devops|technical support'
+           THEN 'Other Tech'
+         ELSE 'Non-Tech'
        END,
        NULLIF(TRIM(j.location), ''),
        NULLIF(j.description_clean, ''),
@@ -446,17 +502,40 @@ SET SQL_SAFE_UPDATES = @jobavenir_prior_safe_updates;
 
 -- --------------------------------------------------------------------------
 -- STEP 9. JOB_SKILLS: connect actual Jobicy postings to distinct skills.
--- Jobicy keywords are Technology skills (Step 2a/2d).
+-- A keyword is matched through skill_aliases first (e.g. 'SQL' -> 'Structured
+-- query language SQL'), otherwise by exact Technology skill name.
 -- --------------------------------------------------------------------------
 INSERT INTO job_skills (job_id, skill_id, extraction_method)
-SELECT DISTINCT p.job_id, k.skill_id, 'keyword_match'
+SELECT DISTINCT p.job_id, COALESCE(a.skill_id, k.skill_id), 'keyword_match'
 FROM stg_job_skills s
 JOIN job_postings p ON p.job_id = TRIM(s.job_id)
-JOIN skills k ON k.skill_name = TRIM(s.skill_name)
-             AND k.skill_category = 'Technology'
+LEFT JOIN skill_aliases a ON a.alias_name = TRIM(s.skill_name)
+LEFT JOIN skills k ON k.skill_name = TRIM(s.skill_name)
+                  AND k.skill_category = 'Technology'
 WHERE NULLIF(TRIM(s.skill_name), '') IS NOT NULL
+  AND COALESCE(a.skill_id, k.skill_id) IS NOT NULL
 ON DUPLICATE KEY UPDATE
   extraction_method = VALUES(extraction_method);
+
+-- How each Jobicy keyword was matched (alias, exact O*NET name, or a new
+-- Jobicy-only skill). 'Not linked' should not appear.
+SELECT TRIM(s.skill_name) AS jobicy_keyword,
+       COALESCE(ka.skill_name, k.skill_name) AS linked_skill,
+       CASE
+         WHEN a.alias_name IS NOT NULL THEN 'Alias'
+         WHEN k.skill_source = 'O*NET' THEN 'Exact O*NET name'
+         WHEN k.skill_source = 'Jobicy' THEN 'Jobicy-only skill'
+         ELSE 'Not linked'
+       END AS matched_by,
+       COUNT(DISTINCT TRIM(s.job_id)) AS postings
+FROM stg_job_skills s
+LEFT JOIN skill_aliases a ON a.alias_name = TRIM(s.skill_name)
+LEFT JOIN skills ka ON ka.skill_id = a.skill_id
+LEFT JOIN skills k ON k.skill_name = TRIM(s.skill_name)
+                  AND k.skill_category = 'Technology'
+WHERE NULLIF(TRIM(s.skill_name), '') IS NOT NULL
+GROUP BY TRIM(s.skill_name), COALESCE(ka.skill_name, k.skill_name), matched_by
+ORDER BY postings DESC;
 
 SELECT COUNT(*) AS job_skill_links_loaded FROM job_skills;
 
@@ -472,7 +551,14 @@ UNION ALL SELECT 'occupation_skill_ratings', COUNT(*)
             FROM occupation_skill_ratings
 UNION ALL SELECT 'companies', COUNT(*) FROM companies
 UNION ALL SELECT 'job_postings', COUNT(*) FROM job_postings
-UNION ALL SELECT 'job_skills', COUNT(*) FROM job_skills;
+UNION ALL SELECT 'job_skills', COUNT(*) FROM job_skills
+UNION ALL SELECT 'skill_aliases', COUNT(*) FROM skill_aliases;
+
+-- Postings per role category (Non-Tech = outside the tech industries)
+SELECT role_category, COUNT(*) AS postings
+FROM job_postings
+GROUP BY role_category
+ORDER BY postings DESC;
 
 -- Ratings per category and scale (each category: IM and LV counts are equal)
 SELECT k.skill_category, r.scale_id, COUNT(*) AS ratings,
@@ -684,6 +770,25 @@ FROM occupation_skills
 WHERE occupation_title = 'Data Scientists'
 GROUP BY skill_category
 ORDER BY skill_category;
+
+-- ANALYTICAL QUERY 8: How often postings mention each skill, next to how
+-- many O*NET occupations flag it as Hot Technology / In Demand. The skill
+-- aliases make this join possible (e.g. Jobicy 'SQL' = O*NET 'Structured
+-- query language SQL').
+SELECT k.skill_name,
+       COUNT(DISTINCT js.job_id) AS postings_mentioning,
+       ROUND(100.0 * COUNT(DISTINCT js.job_id) /
+             (SELECT COUNT(*) FROM job_postings), 1) AS pct_of_all_postings,
+       (SELECT COUNT(*) FROM occupation_technology_skills t
+         WHERE t.skill_id = k.skill_id AND t.hot_technology = 1)
+         AS occupations_hot_technology,
+       (SELECT COUNT(*) FROM occupation_technology_skills t
+         WHERE t.skill_id = k.skill_id AND t.in_demand = 1)
+         AS occupations_in_demand
+FROM job_skills js
+JOIN skills k ON k.skill_id = js.skill_id
+GROUP BY k.skill_id, k.skill_name
+ORDER BY postings_mentioning DESC;
 
 -- --------------------------------------------------------------------------
 -- STEP 12. CRUD DEMONSTRATION (Create / Read / Update / Delete)

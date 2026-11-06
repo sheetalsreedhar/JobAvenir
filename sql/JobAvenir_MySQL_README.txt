@@ -5,12 +5,13 @@ FILES
 -----
 1. JobAvenir_01_Create_Database_MySQL.sql
    Creates the jobavenir_db database: 7 staging tables (one per cleaned CSV)
-   and 8 core tables, with all keys and constraints.
+   and 9 core tables, with all keys and constraints. Safe to run again on
+   an existing database: it only adds tables that are missing.
 
 2. JobAvenir_02_Load_and_Analyze_MySQL.sql
-   Validates the staging data, loads the 8 core tables, runs validation
+   Validates the staging data, loads the 9 core tables, runs validation
    queries, creates the market_skill_demand and occupation_skills VIEWs, and
-   includes 7 analytical queries, a safe CRUD demo and optional invalid-data
+   includes 8 analytical queries, a safe CRUD demo and optional invalid-data
    demos.
 
 The earlier files 01b, 03 and 04 were merged into these two on 5 Nov 2026.
@@ -24,13 +25,13 @@ REQUIREMENTS
 - The cleaned O*NET + Jobicy CSV files in data/cleaned/.
 - Do NOT use the old Snowflake SQL scripts in MySQL Workbench.
 
-SCHEMA (15 tables + 2 views)
+SCHEMA (16 tables + 2 views)
 ---------------------------
 Staging (7): stg_occupations, stg_software_skills, stg_job_titles,
   stg_jobicy_postings, stg_job_skills, stg_essential_skills,
   stg_transferable_skills. Each matches one CSV, column for column.
 
-Core (8):
+Core (9):
   occupations                  O*NET occupations (PK occupation_id)
   skills                       ALL skills, one row each (PK skill_id)
                                skill_category = Technology / Essential /
@@ -46,6 +47,9 @@ Core (8):
   companies                    Companies from Jobicy postings
   job_postings                 Jobicy postings (FK companies, occupations)
   job_skills                   Jobicy posting <-> skill links
+  skill_aliases                Other names for a skill: a Jobicy keyword
+                               (e.g. 'SQL') -> the O*NET skill it means
+                               ('Structured query language SQL')
 Views:
   market_skill_demand          Share of Jobicy postings per role that
                                mention each skill
@@ -61,14 +65,20 @@ occupations then point at the same skill_id. The two occupation link tables
 stay separate because they hold different facts: a Technology skill is
 "used" (with Hot Technology / In Demand flags), while an Essential or
 Transferable skill is "rated" (Importance and Level, with statistics).
+skill_aliases lets a Jobicy keyword and its O*NET name share one skill_id,
+so posting mentions can be compared with O*NET's flags (query 8).
 
 VERY IMPORTANT ORDER
 --------------------
-A. If jobavenir_db was built with the older scripts, rebuild it once:
+A. If jobavenir_db was built before the single skills table (scripts 01b,
+   03 or 04), rebuild it once:
      DROP DATABASE jobavenir_db;
    (This only removes your local copy; everything is rebuilt from the CSVs.)
-B. Open File 1 in MySQL Workbench and execute it once.
-C. Refresh the SCHEMAS panel. Look for jobavenir_db > Tables (15 tables).
+   A database built with the single skills table needs no DROP: running
+   File 1 again adds skill_aliases, and File 2 moves any old Jobicy-only
+   skills (SQL, AWS, Power BI, Java) onto their O*NET skills.
+B. Open File 1 in MySQL Workbench and execute it.
+C. Refresh the SCHEMAS panel. Look for jobavenir_db > Tables (16 tables).
 D. Import the cleaned CSV files into the EXISTING staging tables.
 
    Recommended: run notebooks/importing_onet_data_into_MySql.ipynb. It
@@ -108,8 +118,8 @@ D. Import the cleaned CSV files into the EXISTING staging tables.
    saved in the file.
 
 E. Open File 2 and run Step 0 FIRST (counts of the 7 staging tables).
-   Expected: 1,016 / 31,821 / 54,269 / 74 / 167 / 18,200 / 45,500.
-   Jobicy results will vary with API data.
+   Expected: 1,016 / 31,821 / 54,269 / 74 / 167 / 18,200 / 45,500 with the
+   31 Oct 2026 Jobicy pull. The two Jobicy counts grow with every new pull.
 F. Run loading Steps 1-9 in order. Each step that has a check prints it
    first; the check counts should all be 0.
 G. Run the summary and validation SELECTs (Step 10), then the two views
@@ -118,11 +128,13 @@ H. Run the CRUD demo block (Step 12) and capture before/after screenshots.
 I. Leave the deliberately-failing test queries (Step 13) commented unless
    testing them.
 
-EXPECTED RESULT (tested 5 Nov 2026, fresh build on MySQL 8.0.46)
------------------------------------------------------------------
+EXPECTED RESULT (tested 5 Nov 2026 on MySQL 8.0.46, 31 Oct Jobicy pull)
+-----------------------------------------------------------------------
   occupations                  1,016
-  skills                       8,792  (Technology 8,753 O*NET + 4 Jobicy;
-                                       Essential 10; Transferable 25)
+  skills                       8,788  (Technology 8,753; Essential 10;
+                                       Transferable 25; no Jobicy-only
+                                       skills, thanks to the aliases)
+  skill_aliases                    4
   job_titles                  54,269
   occupation_technology_skills 31,821
   occupation_skill_ratings    63,700  (Essential 18,200; Transferable 45,500)
@@ -130,6 +142,7 @@ EXPECTED RESULT (tested 5 Nov 2026, fresh build on MySQL 8.0.46)
   job_postings                    74
   job_skills                     167
   market_skill_demand (view)      32 rows
+  (companies, job_postings, job_skills and the view grow with new pulls)
   occupation_skills (view)    63,671 rows (Technology 31,821; Essential
                                        9,100; Transferable 22,750)
 File 2 can be run again on the same staging data without duplicating rows.
@@ -186,17 +199,29 @@ IMPORTANT DATA NOTES
   the 8,753 O*NET tools are grouped under different types in different
   occupations.
 - Jobicy keywords that match an O*NET technology name exactly (Python,
-  Tableau, PostgreSQL, Snowflake, Docker) reuse the O*NET skill row. The
-  others (AWS, Java, Power BI, SQL) are added with skill_source = 'Jobicy';
-  a later skill-alias step can link them to their O*NET names.
+  Tableau, PostgreSQL, Snowflake, Docker, Microsoft Excel) reuse the O*NET
+  skill row. The others are linked through skill_aliases: SQL -> Structured
+  query language SQL, AWS -> Amazon Web Services AWS software, Power BI ->
+  Microsoft Power BI, Java -> Oracle Java. When the skill dictionary in
+  notebook 02 gains a keyword whose O*NET name differs, add a row to the
+  alias list in File 2 Step 2d. A keyword with neither becomes a
+  Jobicy-only skill (skill_source = 'Jobicy').
+- Jobicy collection (notebook 02) has no role filter. Each pull makes one
+  search for all U.S.-eligible jobs plus one search per Jobicy industry,
+  following nextCursor pages. Jobicy asks for at most one pull per hour; the
+  notebook refuses to start a pull within an hour of the last one.
 - Every Jobicy pull is saved unchanged in data/jobicy/raw/<UTC time>/.
-  The cleaning notebook reads only those saved files, never the live API.
+  The cleaning notebook reads only those saved files, never the live API,
+  and combines all pulls, so the dataset grows with each pull.
 - job_url must be shown with each posting: Jobicy asks API users to credit
   Jobicy and link to the original posting.
 - Jobicy geo=usa describes remote jobs available to US applicants. It does
   not prove the employer's office is located in a given US state.
 - The title classification of Data Analyst / Data Scientist / Data Engineer /
-  Software Engineer / AI Engineer is based on simple title keywords.
+  Software Engineer / AI Engineer is based on simple title keywords. Other
+  postings are 'Other Tech' when the title names a technical job (engineer,
+  developer, programmer, DevOps, architect) or Jobicy files them under a
+  tech industry, and 'Non-Tech' otherwise.
 - An exact unambiguous O*NET title match is attempted; others remain NULL.
   Document and review the unmatched titles; do not force unreliable links.
 - Skill demand is COUNT(DISTINCT postings mentioning skill) divided by the
@@ -209,7 +234,7 @@ IMPORTANT DATA NOTES
 
 WHAT TO PUT IN YOUR MILESTONE 2 WORD REPORT
 --------------------------------------------
-1. Updated schema diagram of the 8 core tables; explain PK, FK, 1-to-many
+1. Updated schema diagram of the 9 core tables; explain PK, FK, 1-to-many
    and many-to-many relationships, the single skills table with
    skill_category, and your normalization decisions.
 2. Data integrity: MySQL InnoDB PK/FK enforcement and CHECK constraints;

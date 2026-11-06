@@ -1,13 +1,13 @@
 -- ============================================================================
 -- JobAvenir | ADT Milestone 2 | FILE 1 OF 2
 -- MySQL Community Server 8.0+ | Run in MySQL Workbench
--- PURPOSE: Create the database, 7 CSV staging tables and 8 core tables.
+-- PURPOSE: Create the database, 7 CSV staging tables and 9 core tables.
 -- ============================================================================
 -- INSTRUCTIONS
 --  1. Open MySQL Workbench and connect to your MySQL server.
 --  2. File > Open SQL Script > this file.
 --  3. Execute the entire script (lightning-bolt icon).
---  4. Refresh SCHEMAS > jobavenir_db > Tables (15 tables).
+--  4. Refresh SCHEMAS > jobavenir_db > Tables (16 tables).
 --  5. Import the seven CLEANED CSV files into the stg_* tables
 --     (see JobAvenir_MySQL_README.txt for which file goes where).
 --  6. ONLY THEN execute JobAvenir_02_Load_and_Analyze_MySQL.sql.
@@ -155,7 +155,9 @@ CREATE TABLE IF NOT EXISTS stg_transferable_skills (
 --                                  with Hot Technology / In Demand flags
 --   occupation_skill_ratings     : Essential and Transferable skills,
 --                                  rated for Importance and Level
--- Jobicy postings link to the same skills table through job_skills.
+-- Jobicy postings link to the same skills table through job_skills, and
+-- skill_aliases maps Jobicy keywords (e.g. 'SQL') to the O*NET skill they
+-- mean (e.g. 'Structured query language SQL').
 -- ============================================================================
 
 -- 1. O*NET standardized occupations
@@ -174,9 +176,8 @@ CREATE TABLE IF NOT EXISTS occupations (
 --                                       (e.g. Complex Problem Solving)
 --    onet_element_id : O*NET's ID for Essential/Transferable skills
 --                      (e.g. 2.A.1.a); NULL for Technology skills.
---    skill_source    : 'O*NET', or 'Jobicy' for a keyword not in O*NET under
---                      that exact name (e.g. 'SQL'). A later skill-alias step
---                      can link these to their O*NET names.
+--    skill_source    : 'O*NET', or 'Jobicy' for a keyword that matches no
+--                      O*NET skill by exact name or by alias (see table 9).
 CREATE TABLE IF NOT EXISTS skills (
   skill_id        BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   skill_name      VARCHAR(500) NOT NULL,
@@ -328,8 +329,23 @@ CREATE TABLE IF NOT EXISTS job_skills (
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB;
 
+-- 9. Other names for a skill. A Jobicy keyword such as 'SQL' points to the
+--    O*NET skill it means ('Structured query language SQL'), so postings and
+--    occupations share one skill_id. One alias names one skill; a skill can
+--    have several aliases.
+CREATE TABLE IF NOT EXISTS skill_aliases (
+  alias_name   VARCHAR(500) NOT NULL,
+  skill_id     BIGINT UNSIGNED NOT NULL,
+  alias_source VARCHAR(50)  NOT NULL DEFAULT 'Jobicy keyword',
+  PRIMARY KEY (alias_name),
+  KEY idx_aliases_skill (skill_id),
+  CONSTRAINT fk_aliases_skill FOREIGN KEY (skill_id)
+    REFERENCES skills (skill_id)
+    ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB;
+
 -- ============================================================================
--- VERIFY SUCCESS: 7 staging tables + 8 core tables = 15 tables
+-- VERIFY SUCCESS: 7 staging tables + 9 core tables = 16 tables
 -- ============================================================================
 SHOW TABLES FROM jobavenir_db;
 SHOW CREATE TABLE skills;
