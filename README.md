@@ -18,8 +18,8 @@ The team switched from Greenhouse to Jobicy for simpler public role-based search
 | O*NET | `occupations_clean.csv` | 1,016 | Standardized occupations and descriptions |
 | O*NET | `software_skills_clean.csv` | 31,821 | Occupation–software associations |
 | O*NET | `job_titles_clean.csv` | 54,269 | Alternative occupation titles |
-| Jobicy API | `jobicy_jobs_clean.csv` | 74 (31 Oct pull) | Saved job postings and descriptions; grows with each new pull |
-| Derived from Jobicy | `job_skills_clean.csv` | 167 (31 Oct pull) | Extracted job–skill pairs |
+| Jobicy API | `jobicy_jobs_clean.csv` | 845 (pulls of 31 Oct and 6 Nov) | Saved job postings and descriptions; grows with each new pull |
+| Derived from Jobicy | `job_skills_clean.csv` | 580 | Extracted job–skill pairs |
 | O*NET | `essential_skills_clean.csv` | 18,200 | Occupation-specific essential-skill ratings |
 | O*NET | `transferable_skills_clean.csv` | 45,500 | Occupation-specific transferable-skill ratings |
 
@@ -80,7 +80,7 @@ All skills now live in **one `skills` table** with a `skill_category` field, ins
 | `job_postings` | Jobicy postings |
 | `job_skills` | Jobicy posting ↔ skill links |
 
-The database has **16 tables (7 staging + 9 core, including `skill_aliases` added later the same day)** and two views: `market_skill_demand`, and `occupation_skills`, which lists every occupation–skill pair of any category in one place (importance and level for Essential/Transferable skills; Hot Technology / In Demand flags for Technology skills) without storing anything twice.
+The database has **18 tables (7 staging + 11 core, including `skill_aliases`, `app_users` and `user_skills` added later the same day)** and two views: `market_skill_demand`, and `occupation_skills`, which lists every occupation–skill pair of any category in one place (importance and level for Essential/Transferable skills; Hot Technology / In Demand flags for Technology skills) without storing anything twice.
 
 Design notes:
 
@@ -107,13 +107,32 @@ Design notes:
 
 Postings and occupations now share one `skill_id` for each of these, so there are no Jobicy-only skills (`skills` = 8,788) and posting mentions can be compared with O*NET's Hot Technology / In Demand flags (File 2, analytical query 8). An existing database needs no rebuild: run File 1 again (it adds `skill_aliases`) and then File 2, which moves any old Jobicy-only skill links onto the O*NET skills.
 
+**First broad pull (6 Nov 2026, 01:34 UTC):** 27 saved responses. Combined with the 31 Oct pull: **845 unique postings** (771 new) from 219 companies, 601 with a salary range, and 580 job–skill links. File 2 classifies 341 postings as tech (227 Other Tech plus the five named roles) and 504 as Non-Tech. Seniority is skewed toward Senior (360) and Director (306) postings.
+
+## November 5, 2026 — User profiles for the skill-gap feature
+
+The planned app lets a user pick a target occupation and see which skills they still need. Two tables store that:
+
+| Table | What it holds |
+|---|---|
+| `app_users` | A user: display name, unique email, target occupation (FK to `occupations`), `is_demo` flag |
+| `user_skills` | The skills a user has (FK to `skills`), with a self-rated proficiency from 1 to 5 |
+
+Until the app exists, File 2 loads **three synthetic demo profiles** (`is_demo = 1`, example.com addresses) aiming at Data Scientists, Software Developers and Business Intelligence Analysts. They are used by:
+
+- **CRUD demo (File 2 Step 13):** create a profile with skills, read it, change its target occupation and a proficiency, then delete it (the delete cascades to its skills). Everything is rolled back.
+- **Skill-gap queries (analytical queries 9 and 10):** the skills a user's target occupation needs (importance ≥ 3.5, or a Technology skill marked In Demand) that the user lacks, ranked by how often job postings mention them, and each user's readiness percentage.
+- **Invalid-data demos (Step 14):** a proficiency outside 1–5 and a duplicate email are rejected, alongside the duplicate key, invalid foreign key and invalid skill category cases.
+
+The database diagram is in `docs/JobAvenir_ERD.png` (source: `docs/JobAvenir_ERD.mmd`).
+
 ## MySQL setup and reproduction
 
-**Requirements:** MySQL 8.0+ (MySQL Community Server, or MAMP 7+ with MySQL 8.0 selected), MySQL Workbench, Python 3 with Pandas, Requests, Beautiful Soup and `mysql-connector-python`, and Jupyter or VS Code for the notebooks.
+**Requirements:** MySQL 8.0+ (MySQL Community Server, or MAMP 7+ with MySQL 8.0 selected), MySQL Workbench, Python 3, and Jupyter or VS Code for the notebooks. Install the Python packages with `python -m pip install -r requirements.txt` (Pandas, Requests, Beautiful Soup, `mysql-connector-python`, ipykernel).
 
 1. Clone this repository and connect MySQL Workbench to your MySQL server (MAMP uses port 8889 by default, standard MySQL 3306).
 2. If you built `jobavenir_db` with the older scripts, run `DROP DATABASE jobavenir_db;` once. This only removes your local copy.
-3. Run `sql/JobAvenir_01_Create_Database_MySQL.sql` to create the 16 tables.
+3. Run `sql/JobAvenir_01_Create_Database_MySQL.sql` to create the 18 tables.
 4. Import the five O*NET CSVs (occupations, software skills, job titles, essential skills, transferable skills) with `notebooks/importing_onet_data_into_MySql.ipynb`. If your MySQL server is not on port 3306 (MAMP uses 8889), first create a `.env` file in the project folder containing `MYSQL_PORT=8889`; `.env` is not committed, so each teammate keeps their own port. The notebook takes a few seconds, empties each staging table first, and checks every count against its CSV. The Workbench Table Data Import Wizard also works, but it is slow on these files, and an import that is stopped or run twice leaves wrong counts.
 5. Import the two Jobicy CSVs with `notebooks/importing_jobicy_data_into_MySql.ipynb` (`REPLACE_STAGING = 1`; it reads the same `.env`). Clear both notebooks' outputs before committing them.
 6. Run `sql/JobAvenir_02_Load_and_Analyze_MySQL.sql`. Every validation count should be 0, and the row counts should match `sql/JobAvenir_MySQL_README.txt`.
@@ -132,10 +151,12 @@ Postings and occupations now share one `skill_id` for each of these, so there ar
 | Essential Skills and Transferable Skills cleaned | Completed |
 | Essential and Transferable CSVs imported into staging | **Verified (18,200 + 45,500)** |
 | Skills consolidated into one `skills` table (Files 1 and 2) | Completed; tested on a fresh MySQL 8.0 build |
-| Rebuild `jobavenir_db` on team machines and record counts | Pending |
+| Rebuild `jobavenir_db` on team machines and record counts | Done on Mounika's machine; Sheetal pending |
 | Skill aliases linking Jobicy keywords to O*NET skills | Completed (4 aliases; no Jobicy-only skills) |
-| Jobicy collection without role tags (all U.S.-eligible jobs, every industry) | Code ready; first broad pull pending |
-| Finalize ER diagram and Milestone 2 report | In progress |
+| Jobicy collection without role tags (all U.S.-eligible jobs, every industry) | Completed; first broad pull 6 Nov (845 postings in total) |
+| User tables (`app_users`, `user_skills`), demo profiles, user-profile CRUD, skill-gap queries | Completed; tested on a fresh MySQL 8.0 build |
+| ER diagram (`docs/JobAvenir_ERD.png`) | Completed |
+| Milestone 2 report (screenshots, write-up, contributions) | In progress |
 | Implement Streamlit frontend and deployment | Planned |
 
 ## References and attribution
@@ -145,4 +166,4 @@ Postings and occupations now share one `skill_id` for each of these, so there ar
 - [Jobicy API](https://jobicy.com/jobs-rss-feed) — source of sampled remote job postings; preserve attribution and original links when displaying listings.
 - [MySQL Workbench documentation](https://dev.mysql.com/doc/workbench/en/)
 
-**AI assistance:** ChatGPT has been used for planning, troubleshooting, code examples, and README drafting. Team members must review and verify all submitted SQL, results, and claims, and disclose meaningful assistance in the course report.
+

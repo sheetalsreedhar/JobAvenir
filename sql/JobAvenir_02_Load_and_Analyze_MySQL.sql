@@ -2,8 +2,8 @@
 -- JobAvenir | ADT Milestone 2 | FILE 2 OF 2
 -- MySQL Community Server 8.0+ | Run in MySQL Workbench
 -- PURPOSE: Verify staging CSVs, populate normalized tables, validate integrity,
---          create the market_skill_demand and occupation_skills VIEWs,
---          show analytical queries and CRUD.
+--          load demo user profiles, create the market_skill_demand and
+--          occupation_skills VIEWs, show analytical queries and CRUD.
 -- ============================================================================
 -- BEFORE RUNNING:
 --   [ ] Ran JobAvenir_01_Create_Database_MySQL.sql successfully.
@@ -540,7 +540,69 @@ ORDER BY postings DESC;
 SELECT COUNT(*) AS job_skill_links_loaded FROM job_skills;
 
 -- --------------------------------------------------------------------------
--- STEP 10. LOADING SUMMARY AND VALIDATION QUERIES (save screenshots).
+-- STEP 10. DEMO USER PROFILES (synthetic data, is_demo = 1)
+-- The planned app will create user profiles. Until it exists, three clearly
+-- labelled demo users show how app_users and user_skills work. They use
+-- example.com addresses, which can never belong to a real person.
+-- Target occupations: 15-2051.00 Data Scientists, 15-1252.00 Software
+-- Developers, 15-2051.01 Business Intelligence Analysts.
+-- Rerunnable: existing demo users and skills are updated, not duplicated.
+-- --------------------------------------------------------------------------
+INSERT INTO app_users (display_name, email, target_occupation_id, is_demo)
+SELECT d.display_name, d.email, o.occupation_id, 1
+FROM (
+  SELECT 'Demo User A' AS display_name, 'demo.a@example.com' AS email,
+         '15-2051.00' AS occupation_id
+  UNION ALL SELECT 'Demo User B', 'demo.b@example.com', '15-1252.00'
+  UNION ALL SELECT 'Demo User C', 'demo.c@example.com', '15-2051.01'
+) d
+JOIN occupations o ON o.occupation_id = d.occupation_id
+ON DUPLICATE KEY UPDATE
+  display_name = VALUES(display_name),
+  target_occupation_id = VALUES(target_occupation_id),
+  is_demo = VALUES(is_demo);
+
+-- Skills each demo user has, with a self-rated proficiency (1-5)
+INSERT INTO user_skills (user_id, skill_id, proficiency)
+SELECT u.user_id, k.skill_id, d.proficiency
+FROM (
+  SELECT 'demo.a@example.com' AS email, 'Python' AS skill_name,
+         'Technology' AS skill_category, 4 AS proficiency
+  UNION ALL SELECT 'demo.a@example.com', 'Structured query language SQL', 'Technology', 3
+  UNION ALL SELECT 'demo.a@example.com', 'Microsoft Excel', 'Technology', 4
+  UNION ALL SELECT 'demo.a@example.com', 'Writing', 'Essential', 4
+  UNION ALL SELECT 'demo.a@example.com', 'Critical Thinking', 'Essential', 3
+  UNION ALL SELECT 'demo.a@example.com', 'Complex Problem Solving', 'Transferable', 3
+  UNION ALL SELECT 'demo.b@example.com', 'Oracle Java', 'Technology', 4
+  UNION ALL SELECT 'demo.b@example.com', 'Python', 'Technology', 3
+  UNION ALL SELECT 'demo.b@example.com', 'Git', 'Technology', 4
+  UNION ALL SELECT 'demo.b@example.com', 'Docker', 'Technology', 2
+  UNION ALL SELECT 'demo.b@example.com', 'Programming', 'Transferable', 4
+  UNION ALL SELECT 'demo.b@example.com', 'Reading Comprehension', 'Essential', 4
+  UNION ALL SELECT 'demo.c@example.com', 'Microsoft Excel', 'Technology', 5
+  UNION ALL SELECT 'demo.c@example.com', 'Tableau', 'Technology', 3
+  UNION ALL SELECT 'demo.c@example.com', 'Microsoft Power BI', 'Technology', 2
+  UNION ALL SELECT 'demo.c@example.com', 'Speaking', 'Essential', 4
+  UNION ALL SELECT 'demo.c@example.com', 'Active Listening', 'Essential', 4
+) d
+JOIN app_users u ON u.email = d.email
+JOIN skills k ON k.skill_name = d.skill_name
+             AND k.skill_category = d.skill_category
+ON DUPLICATE KEY UPDATE
+  proficiency = VALUES(proficiency);
+
+-- The demo profiles (expected: 3 users with 6, 6 and 5 skills)
+SELECT u.display_name, u.email, o.occupation_title AS target_occupation,
+       COUNT(us.skill_id) AS skills_in_profile
+FROM app_users u
+LEFT JOIN occupations o ON o.occupation_id = u.target_occupation_id
+LEFT JOIN user_skills us ON us.user_id = u.user_id
+WHERE u.is_demo = 1
+GROUP BY u.user_id, u.display_name, u.email, o.occupation_title
+ORDER BY u.display_name;
+
+-- --------------------------------------------------------------------------
+-- STEP 11. LOADING SUMMARY AND VALIDATION QUERIES (save screenshots).
 -- --------------------------------------------------------------------------
 SELECT 'occupations' AS table_name, COUNT(*) AS row_count FROM occupations
 UNION ALL SELECT 'skills', COUNT(*) FROM skills
@@ -552,7 +614,9 @@ UNION ALL SELECT 'occupation_skill_ratings', COUNT(*)
 UNION ALL SELECT 'companies', COUNT(*) FROM companies
 UNION ALL SELECT 'job_postings', COUNT(*) FROM job_postings
 UNION ALL SELECT 'job_skills', COUNT(*) FROM job_skills
-UNION ALL SELECT 'skill_aliases', COUNT(*) FROM skill_aliases;
+UNION ALL SELECT 'skill_aliases', COUNT(*) FROM skill_aliases
+UNION ALL SELECT 'app_users', COUNT(*) FROM app_users
+UNION ALL SELECT 'user_skills', COUNT(*) FROM user_skills;
 
 -- Postings per role category (Non-Tech = outside the tech industries)
 SELECT role_category, COUNT(*) AS postings
@@ -625,7 +689,7 @@ WHERE role_category = 'Other Tech'
 ORDER BY job_title LIMIT 30;
 
 -- --------------------------------------------------------------------------
--- STEP 11. VIEWS (market_skill_demand, occupation_skills) AND ANALYTICS
+-- STEP 12. VIEWS (market_skill_demand, occupation_skills) AND ANALYTICS
 --
 -- MARKET_SKILL_DEMAND VIEW
 -- Denominator: ALL collected postings in that role (even if no skills found).
@@ -790,62 +854,128 @@ JOIN skills k ON k.skill_id = js.skill_id
 GROUP BY k.skill_id, k.skill_name
 ORDER BY postings_mentioning DESC;
 
+-- ANALYTICAL QUERY 9 (the app's main question): the skill gap for one user.
+-- Skills Demo User A's target occupation needs that their profile lacks.
+-- "Needs" = an Essential/Transferable skill with importance >= 3.5 (scale
+-- 1-5), or a Technology skill O*NET marks In Demand for that occupation.
+-- postings_mentioning shows how often the Jobicy postings mention each one.
+SELECT u.display_name,
+       os.occupation_title AS target_occupation,
+       os.skill_category,
+       os.skill_name,
+       os.importance,
+       os.in_demand,
+       (SELECT COUNT(*) FROM job_skills js
+         WHERE js.skill_id = os.skill_id) AS postings_mentioning
+FROM app_users u
+JOIN occupation_skills os ON os.occupation_id = u.target_occupation_id
+LEFT JOIN user_skills us
+  ON us.user_id = u.user_id AND us.skill_id = os.skill_id
+WHERE u.email = 'demo.a@example.com'
+  AND us.skill_id IS NULL
+  AND (os.importance >= 3.5 OR os.in_demand = 1)
+ORDER BY postings_mentioning DESC, os.importance DESC, os.skill_name;
+
+-- ANALYTICAL QUERY 10: How ready each user is for their target occupation:
+-- of the skills it needs (same rule as query 9), how many they already have.
+SELECT u.display_name,
+       os.occupation_title AS target_occupation,
+       COUNT(*) AS skills_needed,
+       SUM(us.skill_id IS NOT NULL) AS skills_held,
+       ROUND(100.0 * SUM(us.skill_id IS NOT NULL) / COUNT(*), 1)
+         AS readiness_pct
+FROM app_users u
+JOIN occupation_skills os ON os.occupation_id = u.target_occupation_id
+LEFT JOIN user_skills us
+  ON us.user_id = u.user_id AND us.skill_id = os.skill_id
+WHERE os.importance >= 3.5 OR os.in_demand = 1
+GROUP BY u.user_id, u.display_name, os.occupation_title
+ORDER BY readiness_pct DESC;
+
 -- --------------------------------------------------------------------------
--- STEP 12. CRUD DEMONSTRATION (Create / Read / Update / Delete)
--- All CRUD actions use temporary DEMO records and finish with ROLLBACK.
--- Run this block once for screenshots; it does NOT change your real dataset.
--- The test company is inserted solely to support the demo job posting.
+-- STEP 13. CRUD DEMONSTRATION (Create / Read / Update / Delete)
+-- A user profile managed the way the planned app will manage it. Everything
+-- runs in one transaction that ends with ROLLBACK, so the demo leaves the
+-- database unchanged. Run the block once and take before/after screenshots.
 -- --------------------------------------------------------------------------
 START TRANSACTION;
 
--- C: Create a test company and a test Data Analyst posting
-INSERT INTO companies (company_name)
-VALUES ('__JOBAVENIR_DEMO_COMPANY__');
+-- C: Create a profile aiming at Business Intelligence Analysts, with 3 skills
+INSERT INTO app_users (display_name, email, target_occupation_id, is_demo)
+VALUES ('CRUD Demo User', 'crud.demo@example.com', '15-2051.01', 1);
 
-INSERT INTO job_postings
-  (job_id, job_title, company_id, role_category, job_geo,
-   job_description, published_at)
-SELECT '__JOBAVENIR_DEMO_JOB__', 'Data Analyst - Demo', company_id,
-       'Data Analyst', 'USA', 'SQL and Python - DEMO RECORD', UTC_TIMESTAMP()
-FROM companies
-WHERE company_name = '__JOBAVENIR_DEMO_COMPANY__';
+SET @crud_user_id = LAST_INSERT_ID();
 
--- R: Read test job
-SELECT job_id, job_title, job_geo, job_description
-FROM job_postings
-WHERE job_id = '__JOBAVENIR_DEMO_JOB__';
+INSERT INTO user_skills (user_id, skill_id, proficiency)
+SELECT @crud_user_id, skill_id, 3
+FROM skills
+WHERE (skill_name, skill_category) IN (
+  ('Microsoft Excel', 'Technology'),
+  ('Structured query language SQL', 'Technology'),
+  ('Writing', 'Essential'));
 
--- U: Update test job
-UPDATE job_postings
-SET job_title = 'Senior Data Analyst - Demo',
-    job_description = 'SQL, Python and Tableau - UPDATED DEMO RECORD'
-WHERE job_id = '__JOBAVENIR_DEMO_JOB__';
+-- R: Read the profile with its target occupation and skills (BEFORE update)
+SELECT u.user_id, u.display_name, o.occupation_title AS target_occupation,
+       k.skill_name, k.skill_category, us.proficiency
+FROM app_users u
+LEFT JOIN occupations o ON o.occupation_id = u.target_occupation_id
+LEFT JOIN user_skills us ON us.user_id = u.user_id
+LEFT JOIN skills k ON k.skill_id = us.skill_id
+WHERE u.user_id = @crud_user_id
+ORDER BY k.skill_category, k.skill_name;
 
--- Read the AFTER-update state
-SELECT job_id, job_title, job_description
-FROM job_postings
-WHERE job_id = '__JOBAVENIR_DEMO_JOB__';
+-- U: The user switches their goal to Data Scientists and improves at SQL
+UPDATE app_users
+SET target_occupation_id = '15-2051.00'
+WHERE user_id = @crud_user_id;
 
--- D: Delete test job and then its test company (safe FK order)
-DELETE FROM job_postings
-WHERE job_id = '__JOBAVENIR_DEMO_JOB__';
+UPDATE user_skills
+SET proficiency = 4
+WHERE user_id = @crud_user_id
+  AND skill_id = (SELECT skill_id FROM skills
+                  WHERE skill_name = 'Structured query language SQL'
+                    AND skill_category = 'Technology');
 
-DELETE FROM companies
-WHERE company_name = '__JOBAVENIR_DEMO_COMPANY__';
+-- R: Read the profile AFTER the update
+SELECT u.user_id, u.display_name, o.occupation_title AS target_occupation,
+       k.skill_name, k.skill_category, us.proficiency
+FROM app_users u
+LEFT JOIN occupations o ON o.occupation_id = u.target_occupation_id
+LEFT JOIN user_skills us ON us.user_id = u.user_id
+LEFT JOIN skills k ON k.skill_id = us.skill_id
+WHERE u.user_id = @crud_user_id
+ORDER BY k.skill_category, k.skill_name;
 
--- Confirm test record is no longer present
-SELECT COUNT(*) AS demo_jobs_remaining
-FROM job_postings
-WHERE job_id = '__JOBAVENIR_DEMO_JOB__';
+-- R: What the app would show next: the new target's top missing skills
+SELECT os.skill_category, os.skill_name, os.importance, os.in_demand
+FROM occupation_skills os
+LEFT JOIN user_skills us
+  ON us.user_id = @crud_user_id AND us.skill_id = os.skill_id
+WHERE os.occupation_id = (SELECT target_occupation_id FROM app_users
+                          WHERE user_id = @crud_user_id)
+  AND us.skill_id IS NULL
+  AND (os.importance >= 3.5 OR os.in_demand = 1)
+ORDER BY os.importance DESC, os.skill_name
+LIMIT 10;
+
+-- D: Delete the profile. ON DELETE CASCADE removes its user_skills rows too.
+DELETE FROM app_users
+WHERE user_id = @crud_user_id;
+
+-- Confirm the profile and its skills are gone (both 0)
+SELECT (SELECT COUNT(*) FROM app_users WHERE user_id = @crud_user_id)
+         AS profiles_left,
+       (SELECT COUNT(*) FROM user_skills WHERE user_id = @crud_user_id)
+         AS skills_left;
 
 ROLLBACK;
 
 -- --------------------------------------------------------------------------
--- STEP 13. OPTIONAL INVALID-DATA DEMONSTRATIONS (RUN ONE AT A TIME)
+-- STEP 14. OPTIONAL INVALID-DATA DEMONSTRATIONS (RUN ONE AT A TIME)
 -- These are intentionally commented because they are EXPECTED TO FAIL.
 -- Uncomment only to capture error screenshots, then comment them again.
 -- --------------------------------------------------------------------------
--- Invalid case A: duplicate PK (fails if the target job ID already exists)
+-- Invalid case A: duplicate primary key (an occupation_id that already exists)
 -- INSERT INTO occupations(occupation_id, occupation_title)
 -- SELECT occupation_id, 'Duplicate Test' FROM occupations LIMIT 1;
 --
@@ -855,5 +985,16 @@ ROLLBACK;
 --
 -- Invalid case C: skill_category outside the allowed list (CHECK constraint)
 -- INSERT INTO skills (skill_name, skill_category) VALUES ('Demo Skill', 'Other');
+--
+-- Invalid case D: proficiency outside 1-5 (CHECK constraint)
+-- INSERT INTO user_skills (user_id, skill_id, proficiency)
+-- SELECT u.user_id, k.skill_id, 9
+-- FROM app_users u
+-- JOIN skills k ON k.skill_name = 'Tableau' AND k.skill_category = 'Technology'
+-- WHERE u.email = 'demo.a@example.com';
+--
+-- Invalid case E: a second profile with an email already in use (UNIQUE)
+-- INSERT INTO app_users (display_name, email)
+-- VALUES ('Copy of Demo User A', 'demo.a@example.com');
 
 SELECT 'FINISHED: Review row counts, validation results and demo screenshots' AS status;

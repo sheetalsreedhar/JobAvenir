@@ -1,13 +1,13 @@
 -- ============================================================================
 -- JobAvenir | ADT Milestone 2 | FILE 1 OF 2
 -- MySQL Community Server 8.0+ | Run in MySQL Workbench
--- PURPOSE: Create the database, 7 CSV staging tables and 9 core tables.
+-- PURPOSE: Create the database, 7 CSV staging tables and 11 core tables.
 -- ============================================================================
 -- INSTRUCTIONS
 --  1. Open MySQL Workbench and connect to your MySQL server.
 --  2. File > Open SQL Script > this file.
 --  3. Execute the entire script (lightning-bolt icon).
---  4. Refresh SCHEMAS > jobavenir_db > Tables (16 tables).
+--  4. Refresh SCHEMAS > jobavenir_db > Tables (18 tables).
 --  5. Import the seven CLEANED CSV files into the stg_* tables
 --     (see JobAvenir_MySQL_README.txt for which file goes where).
 --  6. ONLY THEN execute JobAvenir_02_Load_and_Analyze_MySQL.sql.
@@ -158,6 +158,11 @@ CREATE TABLE IF NOT EXISTS stg_transferable_skills (
 -- Jobicy postings link to the same skills table through job_skills, and
 -- skill_aliases maps Jobicy keywords (e.g. 'SQL') to the O*NET skill they
 -- mean (e.g. 'Structured query language SQL').
+--
+-- App users: app_users and user_skills hold the profiles the planned
+-- Streamlit app will create (a user, their target occupation and the skills
+-- they have), so the app can compare a user's skills with what their target
+-- occupation needs. Until the app exists, File 2 loads a few demo profiles.
 -- ============================================================================
 
 -- 1. O*NET standardized occupations
@@ -344,8 +349,47 @@ CREATE TABLE IF NOT EXISTS skill_aliases (
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
+-- 10. Users of the planned app (career explorers). Each user may choose one
+--     target occupation; if that occupation is ever removed, the target is
+--     cleared rather than deleting the user. email is the natural unique key.
+--     is_demo = 1 marks the synthetic demo profiles loaded by File 2.
+CREATE TABLE IF NOT EXISTS app_users (
+  user_id              BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  display_name         VARCHAR(100) NOT NULL,
+  email                VARCHAR(255) NOT NULL,
+  target_occupation_id VARCHAR(20) NULL,
+  is_demo              TINYINT(1) NOT NULL DEFAULT 0,
+  created_at           TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id),
+  UNIQUE KEY uq_app_users_email (email),
+  KEY idx_app_users_target (target_occupation_id),
+  CONSTRAINT fk_users_target_occupation FOREIGN KEY (target_occupation_id)
+    REFERENCES occupations (occupation_id)
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT chk_app_users_email CHECK (email LIKE '%_@_%')
+) ENGINE=InnoDB;
+
+-- 11. Skills a user has (many-to-many users <-> skills), with a self-rated
+--     proficiency from 1 (beginner) to 5 (expert). Deleting a user deletes
+--     their skills (CASCADE); a skill in use cannot be deleted (RESTRICT).
+CREATE TABLE IF NOT EXISTS user_skills (
+  user_id     BIGINT UNSIGNED NOT NULL,
+  skill_id    BIGINT UNSIGNED NOT NULL,
+  proficiency TINYINT UNSIGNED NOT NULL,
+  added_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, skill_id),
+  KEY idx_user_skills_skill (skill_id),
+  CONSTRAINT fk_userskills_user FOREIGN KEY (user_id)
+    REFERENCES app_users (user_id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_userskills_skill FOREIGN KEY (skill_id)
+    REFERENCES skills (skill_id)
+    ON UPDATE CASCADE ON DELETE RESTRICT,
+  CONSTRAINT chk_user_skills_proficiency CHECK (proficiency BETWEEN 1 AND 5)
+) ENGINE=InnoDB;
+
 -- ============================================================================
--- VERIFY SUCCESS: 7 staging tables + 9 core tables = 16 tables
+-- VERIFY SUCCESS: 7 staging tables + 11 core tables = 18 tables
 -- ============================================================================
 SHOW TABLES FROM jobavenir_db;
 SHOW CREATE TABLE skills;

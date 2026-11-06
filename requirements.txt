@@ -1,0 +1,10 @@
+# Python packages for the JobAvenir notebooks.
+# Install into the Python environment your notebook kernel uses:
+#   python -m pip install -r requirements.txt
+# The MySQL driver is mysql-connector-python (not the "mysql" package,
+# which needs MySQL's C libraries and a compiler).
+pandas>=2.0
+requests>=2.31
+beautifulsoup4>=4.12
+mysql-connector-python>=8.0
+ipykernel>=6.0

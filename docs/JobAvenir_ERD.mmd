@@ -1,0 +1,107 @@
+%% JobAvenir core schema (MySQL, 11 core tables). Staging tables (stg_*) and the two views are not shown.
+%% Crow's foot notation: || exactly one, |o zero or one, o{ zero or many. PK = primary key, FK = foreign key, UK = unique key.
+%% Render: mmdc -i docs/JobAvenir_ERD.mmd -o docs/JobAvenir_ERD.png -b white -s 2
+erDiagram
+    OCCUPATIONS {
+        varchar occupation_id PK "O*NET-SOC code"
+        varchar occupation_title "NOT NULL"
+        longtext description
+    }
+    SKILLS {
+        bigint skill_id PK
+        varchar skill_name "NOT NULL; UNIQUE with category"
+        varchar skill_category "Technology / Essential / Transferable"
+        varchar onet_element_id UK "Essential, Transferable only"
+        varchar skill_source "O*NET / Jobicy"
+    }
+    JOB_TITLES {
+        bigint title_id PK
+        varchar occupation_id FK "NOT NULL"
+        varchar job_title "NOT NULL"
+        varchar short_title "nullable"
+        varchar source_code "NOT NULL"
+    }
+    OCCUPATION_TECHNOLOGY_SKILLS {
+        varchar occupation_id PK,FK
+        bigint skill_id PK,FK
+        varchar technology_type
+        tinyint hot_technology "0/1"
+        tinyint in_demand "0/1"
+    }
+    OCCUPATION_SKILL_RATINGS {
+        varchar occupation_id PK,FK
+        bigint skill_id PK,FK
+        char scale_id PK "IM / LV"
+        decimal data_value
+        int sample_size
+        decimal standard_error
+        decimal lower_ci_bound
+        decimal upper_ci_bound
+        char recommend_suppress "Y/N"
+        char not_relevant "Y/N"
+        char date_updated "YYYY-MM"
+        varchar domain_source
+    }
+    COMPANIES {
+        bigint company_id PK
+        varchar company_name UK
+    }
+    JOB_POSTINGS {
+        varchar job_id PK "Jobicy ID"
+        varchar job_title "NOT NULL"
+        bigint company_id FK "nullable"
+        varchar occupation_id FK "nullable"
+        varchar role_category "NOT NULL"
+        varchar job_geo
+        longtext job_description
+        datetime published_at
+        varchar job_url
+        varchar job_level
+        varchar job_industry
+        decimal salary_min
+        decimal salary_max
+        varchar salary_currency
+        varchar salary_period
+        varchar searched_role
+        timestamp collected_at
+        timestamp last_seen_at
+    }
+    JOB_SKILLS {
+        varchar job_id PK,FK
+        bigint skill_id PK,FK
+        varchar extraction_method
+    }
+    SKILL_ALIASES {
+        varchar alias_name PK "e.g. SQL"
+        bigint skill_id FK "NOT NULL"
+        varchar alias_source
+    }
+    APP_USERS {
+        bigint user_id PK
+        varchar display_name "NOT NULL"
+        varchar email UK "NOT NULL"
+        varchar target_occupation_id FK "nullable"
+        tinyint is_demo "0/1"
+        timestamp created_at
+    }
+    USER_SKILLS {
+        bigint user_id PK,FK
+        bigint skill_id PK,FK
+        tinyint proficiency "1-5"
+        timestamp added_at
+    }
+
+
+    OCCUPATIONS ||--o{ JOB_TITLES : "has alternative titles"
+    OCCUPATIONS ||--o{ OCCUPATION_TECHNOLOGY_SKILLS : "uses"
+    OCCUPATIONS ||--o{ OCCUPATION_SKILL_RATINGS : "is rated on"
+    OCCUPATIONS |o--o{ APP_USERS : "target of"
+    OCCUPATIONS |o--o{ JOB_POSTINGS : "matched title"
+    SKILLS ||--o{ OCCUPATION_TECHNOLOGY_SKILLS : "used by"
+    SKILLS ||--o{ OCCUPATION_SKILL_RATINGS : "rated for"
+    SKILLS ||--o{ SKILL_ALIASES : "also called"
+    SKILLS ||--o{ USER_SKILLS : "held by"
+    APP_USERS ||--o{ USER_SKILLS : "has"
+    SKILLS ||--o{ JOB_SKILLS : "mentioned in"
+    JOB_POSTINGS ||--o{ JOB_SKILLS : "mentions"
+    COMPANIES |o--o{ JOB_POSTINGS : "posts"

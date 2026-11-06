@@ -5,14 +5,14 @@ FILES
 -----
 1. JobAvenir_01_Create_Database_MySQL.sql
    Creates the jobavenir_db database: 7 staging tables (one per cleaned CSV)
-   and 9 core tables, with all keys and constraints. Safe to run again on
+   and 11 core tables, with all keys and constraints. Safe to run again on
    an existing database: it only adds tables that are missing.
 
 2. JobAvenir_02_Load_and_Analyze_MySQL.sql
-   Validates the staging data, loads the 9 core tables, runs validation
-   queries, creates the market_skill_demand and occupation_skills VIEWs, and
-   includes 8 analytical queries, a safe CRUD demo and optional invalid-data
-   demos.
+   Validates the staging data, loads the 11 core tables (including 3 demo
+   user profiles), runs validation queries, creates the market_skill_demand
+   and occupation_skills VIEWs, and includes 10 analytical queries, a CRUD
+   demo on a user profile and 5 optional invalid-data demos.
 
 The earlier files 01b, 03 and 04 were merged into these two on 5 Nov 2026.
 
@@ -25,13 +25,13 @@ REQUIREMENTS
 - The cleaned O*NET + Jobicy CSV files in data/cleaned/.
 - Do NOT use the old Snowflake SQL scripts in MySQL Workbench.
 
-SCHEMA (16 tables + 2 views)
+SCHEMA (18 tables + 2 views)
 ---------------------------
 Staging (7): stg_occupations, stg_software_skills, stg_job_titles,
   stg_jobicy_postings, stg_job_skills, stg_essential_skills,
   stg_transferable_skills. Each matches one CSV, column for column.
 
-Core (9):
+Core (11):
   occupations                  O*NET occupations (PK occupation_id)
   skills                       ALL skills, one row each (PK skill_id)
                                skill_category = Technology / Essential /
@@ -50,6 +50,11 @@ Core (9):
   skill_aliases                Other names for a skill: a Jobicy keyword
                                (e.g. 'SQL') -> the O*NET skill it means
                                ('Structured query language SQL')
+  app_users                    Users of the planned app: name, unique
+                               email, target occupation (FK occupations),
+                               is_demo flag for synthetic demo profiles
+  user_skills                  Skills a user has (PK user_id + skill_id),
+                               self-rated proficiency 1-5
 Views:
   market_skill_demand          Share of Jobicy postings per role that
                                mention each skill
@@ -67,6 +72,9 @@ stay separate because they hold different facts: a Technology skill is
 Transferable skill is "rated" (Importance and Level, with statistics).
 skill_aliases lets a Jobicy keyword and its O*NET name share one skill_id,
 so posting mentions can be compared with O*NET's flags (query 8).
+app_users and user_skills store what the planned app needs to answer a
+user's question "which skills do I still need for my target occupation?"
+(queries 9 and 10). They point at the same occupations and skills tables.
 
 VERY IMPORTANT ORDER
 --------------------
@@ -75,10 +83,11 @@ A. If jobavenir_db was built before the single skills table (scripts 01b,
      DROP DATABASE jobavenir_db;
    (This only removes your local copy; everything is rebuilt from the CSVs.)
    A database built with the single skills table needs no DROP: running
-   File 1 again adds skill_aliases, and File 2 moves any old Jobicy-only
-   skills (SQL, AWS, Power BI, Java) onto their O*NET skills.
+   File 1 again adds any missing tables (skill_aliases, app_users,
+   user_skills), and File 2 moves any old Jobicy-only skills (SQL, AWS,
+   Power BI, Java) onto their O*NET skills.
 B. Open File 1 in MySQL Workbench and execute it.
-C. Refresh the SCHEMAS panel. Look for jobavenir_db > Tables (16 tables).
+C. Refresh the SCHEMAS panel. Look for jobavenir_db > Tables (18 tables).
 D. Import the cleaned CSV files into the EXISTING staging tables.
 
    Recommended: run notebooks/importing_onet_data_into_MySql.ipynb. It
@@ -118,17 +127,19 @@ D. Import the cleaned CSV files into the EXISTING staging tables.
    saved in the file.
 
 E. Open File 2 and run Step 0 FIRST (counts of the 7 staging tables).
-   Expected: 1,016 / 31,821 / 54,269 / 74 / 167 / 18,200 / 45,500 with the
-   31 Oct 2026 Jobicy pull. The two Jobicy counts grow with every new pull.
-F. Run loading Steps 1-9 in order. Each step that has a check prints it
-   first; the check counts should all be 0.
-G. Run the summary and validation SELECTs (Step 10), then the two views
-   and the analytical queries (Step 11).
-H. Run the CRUD demo block (Step 12) and capture before/after screenshots.
-I. Leave the deliberately-failing test queries (Step 13) commented unless
-   testing them.
+   Expected: 1,016 / 31,821 / 54,269 / 845 / 580 / 18,200 / 45,500 with the
+   two Jobicy pulls in the repository (31 Oct and 6 Nov 2026, UTC). The two
+   Jobicy counts grow with every new pull.
+F. Run loading Steps 1-10 in order (Step 10 loads the 3 demo user
+   profiles). Each step that has a check prints it first; the check counts
+   should all be 0.
+G. Run the summary and validation SELECTs (Step 11), then the two views
+   and the analytical queries (Step 12).
+H. Run the CRUD demo block (Step 13) and capture before/after screenshots.
+I. Leave the deliberately-failing test queries (Step 14) commented unless
+   testing them. Uncomment one at a time to capture each error message.
 
-EXPECTED RESULT (tested 5 Nov 2026 on MySQL 8.0.46, 31 Oct Jobicy pull)
+EXPECTED RESULT (tested 5 Nov 2026 on MySQL 8.0.46, both Jobicy pulls)
 -----------------------------------------------------------------------
   occupations                  1,016
   skills                       8,788  (Technology 8,753; Essential 10;
@@ -138,10 +149,13 @@ EXPECTED RESULT (tested 5 Nov 2026 on MySQL 8.0.46, 31 Oct Jobicy pull)
   job_titles                  54,269
   occupation_technology_skills 31,821
   occupation_skill_ratings    63,700  (Essential 18,200; Transferable 45,500)
-  companies                       45
-  job_postings                    74
-  job_skills                     167
-  market_skill_demand (view)      32 rows
+  companies                      219
+  job_postings                   845  (504 Non-Tech, 227 Other Tech,
+                                       114 in the five named roles)
+  job_skills                     580
+  app_users                        3  (demo profiles)
+  user_skills                     17
+  market_skill_demand (view)      49 rows
   (companies, job_postings, job_skills and the view grow with new pulls)
   occupation_skills (view)    63,671 rows (Technology 31,821; Essential
                                        9,100; Transferable 22,750)
@@ -230,20 +244,26 @@ IMPORTANT DATA NOTES
   nationwide market demand. A mention is not necessarily a required skill.
 - A view updates when underlying MySQL tables change, but fetching new API
   postings requires re-running your Python ingestion process separately.
+- app_users holds 3 synthetic demo profiles (is_demo = 1, example.com
+  addresses) until the planned app creates real ones. They exist to show
+  how the user tables, the CRUD operations and the skill-gap queries work.
 - The SQL contains no secrets. Never commit database passwords to GitHub.
 
 WHAT TO PUT IN YOUR MILESTONE 2 WORD REPORT
 --------------------------------------------
-1. Updated schema diagram of the 9 core tables; explain PK, FK, 1-to-many
-   and many-to-many relationships, the single skills table with
-   skill_category, and your normalization decisions.
-2. Data integrity: MySQL InnoDB PK/FK enforcement and CHECK constraints;
-   show duplicate-ID, invalid-FK and invalid-category tests; demonstrate
-   Short Title handling.
+1. Updated schema diagram of the 11 core tables (docs/JobAvenir_ERD.png);
+   explain PK, FK, 1-to-many and many-to-many relationships, the single
+   skills table with skill_category, the user tables, and your
+   normalization decisions.
+2. Data integrity: MySQL InnoDB PK/FK enforcement, UNIQUE and CHECK
+   constraints; show the five invalid-data tests in File 2 Step 14
+   (duplicate key, invalid FK, invalid category, proficiency out of range,
+   duplicate email); demonstrate Short Title handling.
 3. Data loading: original sources, cleaning notebooks, staging tables,
    import procedure, loaded table counts and screenshots.
-4. CRUD: show INSERT/SELECT/UPDATE/DELETE for demonstration posting, with
-   actual screenshots and explanation. The demo uses a transaction/rollback.
+4. CRUD: show the user-profile INSERT/SELECT/UPDATE/DELETE in File 2
+   Step 13, with before/after screenshots and explanation. The demo uses a
+   transaction/rollback; the delete shows ON DELETE CASCADE.
 5. Three or more analytical SQL queries with actual output + explanation.
 6. Repository link + README for reproducing the database.
 7. Individual contributions and AI-assistance disclosure, when applicable.
