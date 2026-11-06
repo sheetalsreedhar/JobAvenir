@@ -1,4 +1,4 @@
-﻿occupation_id,occupation_title,element_id,skill_name,scale_id,scale_name,data_value,sample_size,standard_error,lower_ci_bound,upper_ci_bound,recommend_suppress,not_relevant,date_updated,domain_source
+occupation_id,occupation_title,element_id,skill_name,scale_id,scale_name,data_value,sample_size,standard_error,lower_ci_bound,upper_ci_bound,recommend_suppress,not_relevant,date_updated,domain_source
 11-1011.00,Chief Executives,2.A.1.a,Reading Comprehension,IM,Importance,4.12,8,0.125,3.88,4.37,N,,08/2023,Analyst
 11-1011.00,Chief Executives,2.A.1.a,Reading Comprehension,LV,Level,4.62,8,0.183,4.2664,4.9836,N,N,08/2023,Analyst
 11-1011.00,Chief Executives,2.A.1.b,Active Listening,IM,Importance,4.0,8,0.0,4.0,4.0,N,,08/2023,Analyst

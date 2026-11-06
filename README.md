@@ -99,8 +99,8 @@ Design notes:
 1. Clone this repository and connect MySQL Workbench to your MySQL server (MAMP uses port 8889 by default, standard MySQL 3306).
 2. If you built `jobavenir_db` with the older scripts, run `DROP DATABASE jobavenir_db;` once. This only removes your local copy.
 3. Run `sql/JobAvenir_01_Create_Database_MySQL.sql` to create the 15 tables.
-4. Import the five O*NET CSVs (occupations, software skills, job titles, essential skills, transferable skills) into their `stg_*` tables with the Table Data Import Wizard.
-5. Import the two Jobicy CSVs with `notebooks/importing_jobicy_data_into_MySql.ipynb` (`REPLACE_STAGING = 1`). Clear the notebook's outputs before committing it.
+4. Import the five O*NET CSVs (occupations, software skills, job titles, essential skills, transferable skills) with `notebooks/importing_onet_data_into_MySql.ipynb`. If your MySQL server is not on port 3306 (MAMP uses 8889), first create a `.env` file in the project folder containing `MYSQL_PORT=8889`; `.env` is not committed, so each teammate keeps their own port. The notebook takes a few seconds, empties each staging table first, and checks every count against its CSV. The Workbench Table Data Import Wizard also works, but it is slow on these files, and an import that is stopped or run twice leaves wrong counts.
+5. Import the two Jobicy CSVs with `notebooks/importing_jobicy_data_into_MySql.ipynb` (`REPLACE_STAGING = 1`; it reads the same `.env`). Clear both notebooks' outputs before committing them.
 6. Run `sql/JobAvenir_02_Load_and_Analyze_MySQL.sql`. Every validation count should be 0, and the row counts should match `sql/JobAvenir_MySQL_README.txt`.
 7. Capture the outputs and screenshots of the CRUD demo and analytical queries for the ADT milestone submission.
 

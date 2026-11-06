@@ -69,7 +69,14 @@ A. If jobavenir_db was built with the older scripts, rebuild it once:
    (This only removes your local copy; everything is rebuilt from the CSVs.)
 B. Open File 1 in MySQL Workbench and execute it once.
 C. Refresh the SCHEMAS panel. Look for jobavenir_db > Tables (15 tables).
-D. Import the cleaned CSV files into the EXISTING staging tables:
+D. Import the cleaned CSV files into the EXISTING staging tables.
+
+   Recommended: run notebooks/importing_onet_data_into_MySql.ipynb. It
+   imports all five O*NET CSVs
+   in a few seconds, empties each staging table first when
+   REPLACE_STAGING = 1, and checks every table's count against its CSV.
+   Use it to repair a bad import too: just run it again.
+
 
    cleaned/occupations_clean.csv         -> jobavenir_db.stg_occupations
    cleaned/software_skills_clean.csv     -> jobavenir_db.stg_software_skills
@@ -77,11 +84,13 @@ D. Import the cleaned CSV files into the EXISTING staging tables:
    cleaned/essential_skills_clean.csv    -> jobavenir_db.stg_essential_skills
    cleaned/transferable_skills_clean.csv -> jobavenir_db.stg_transferable_skills
 
-   Right-click EACH existing stg_ table > Table Data Import Wizard.
+   Alternative: right-click EACH existing stg_ table > Table Data Import
+   Wizard. The wizard is slow on these files, and an import that is stopped
+   or run twice leaves wrong row counts (TRUNCATE the table and import once).
    Select the matching CSV file > Use existing table > verify fields > import.
    Data is mapped by CSV columns; review all column names and order.
-   The essential and transferable CSVs start with a hidden UTF-8 BOM:
-   check that their first column maps to occupation_id.
+   All cleaned CSVs are plain UTF-8 without a BOM (byte-order mark). Saving
+   a CSV with encoding="utf-8-sig" adds one, and the wizard then fails.
    Check UTF-8 encoding, comma separator, header row and quoted multiline
    job descriptions. MySQL Workbench import may be slow for large CSVs.
 
@@ -89,8 +98,14 @@ D. Import the cleaned CSV files into the EXISTING staging tables:
    imported with notebooks/importing_jobicy_data_into_MySql.ipynb instead of
    the wizard, because the long descriptions break the wizard. After
    re-running the Jobicy notebook, keep REPLACE_STAGING = 1 so old staging
-   rows are replaced rather than duplicated. Clear the notebook's outputs
-   before committing it, so no password is saved in the file.
+   rows are replaced rather than duplicated.
+
+   Port: both import notebooks connect to 127.0.0.1 on port 3306. If your
+   MySQL server uses another port (MAMP's default is 8889), create a file
+   called .env in the project folder containing the line MYSQL_PORT=8889.
+   .env is not committed to GitHub, so each teammate keeps their own port.
+   Clear the notebooks' outputs before committing them, so no password is
+   saved in the file.
 
 E. Open File 2 and run Step 0 FIRST (counts of the 7 staging tables).
    Expected: 1,016 / 31,821 / 54,269 / 74 / 167 / 18,200 / 45,500.
@@ -218,12 +233,19 @@ TROUBLESHOOTING
 - If Import Wizard sees incorrect columns: ensure it skips header and uses
   the existing staging table, not a newly auto-generated table.
 - If imported data are blank: inspect CSV encoding, delimiter and quoting.
+- If the wizard says "'ascii' codec can't decode byte 0xef in position 0":
+  the CSV starts with a UTF-8 BOM. Re-save it as plain UTF-8 (in Pandas,
+  to_csv(..., encoding="utf-8")) and import again.
 - If foreign key error 1452: load parent tables first and check unmatched IDs.
 - If duplicate key error 1062: inspect source duplicates / re-imports.
 - If check constraint error 3819: a value is outside its allowed list
   (skill_category, scale_id or a Y/N flag).
-- If the import notebook says "Can't connect": check the port (MAMP 8889,
-  standard MySQL 3306) and that the server is running.
+- If an import notebook says "Can't connect": check the port it prints
+  ("Using MySQL port ...") matches your Workbench connection. Put
+  MYSQL_PORT=<your port> in the project's .env file (MAMP 8889, standard
+  MySQL 3306) and check that the server is running.
+- If a staging count is wrong (e.g. stg_job_titles above 54,269): run
+  notebooks/importing_onet_data_into_MySql.ipynb with REPLACE_STAGING = 1.
 - If your SQL uses Snowflake-only keywords (ILIKE, QUALIFY, IFF): you're
   running the OLD script; use the MySQL files instead.
 - If a previous CREATE TABLE used a different design, IF NOT EXISTS will

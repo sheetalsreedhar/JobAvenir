@@ -1,4 +1,4 @@
-﻿occupation_id,occupation_title,element_id,skill_name,scale_id,scale_name,data_value,sample_size,standard_error,lower_ci_bound,upper_ci_bound,recommend_suppress,not_relevant,date_updated,domain_source
+occupation_id,occupation_title,element_id,skill_name,scale_id,scale_name,data_value,sample_size,standard_error,lower_ci_bound,upper_ci_bound,recommend_suppress,not_relevant,date_updated,domain_source
 11-1011.00,Chief Executives,2.B.1.a,Social Perceptiveness,IM,Importance,4.12,8,0.125,3.88,4.37,N,,Aug-23,Analyst
 11-1011.00,Chief Executives,2.B.1.a,Social Perceptiveness,LV,Level,4.25,8,0.1637,3.9292,4.5708,N,N,Aug-23,Analyst
 11-1011.00,Chief Executives,2.B.1.b,Coordination,IM,Importance,4.25,8,0.1637,3.9292,4.5708,N,,Aug-23,Analyst
